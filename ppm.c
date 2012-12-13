@@ -2,14 +2,36 @@
 #include <stdlib.h>
 #include <alsa/asoundlib.h>
       
+unsigned int rate = 192000; // soundcard sample rate in Hz
+const unsigned int sync_length = 5; // minimum length of sync pulse in ms
+const short threshhold = 15000; // threshhold for a high signal
+
+int read_pulse(short *buf, size_t *offset, size_t buf_len, unsigned int *pulse_len)
+{
+  buf += 2*(*offset);
+  buf_len -= *offset;
+  int i = 1;
+  int type;
+  if (buf[0] < threshhold) { // start of low pulse
+    type = 0;
+    for (; i < buf_len; i++)
+      if (buf[2*i] >= threshhold) // end of low pulse
+        break;
+  } else { // start of high pulse
+    type = 1;
+    for (; i < buf_len; i++)
+      if (buf[2*i] < threshhold) // end of high pulse
+        break;
+  }
+  *offset += i;
+  *pulse_len = i;
+  return type;
+}
+      
 main (int argc, char *argv[])
 {
-	unsigned int rate = 192000; // soundcard sample rate in Hz
-  unsigned int sync_length = 5; // minimum length of sync pulse in ms
-  short threshhold = 15000; // threshhold for a high signal
   int samples;
 	int err;
-  int i;
 	snd_pcm_t *capture_handle;
 	snd_pcm_hw_params_t *hw_params;
 
@@ -72,7 +94,8 @@ main (int argc, char *argv[])
 		exit (1);
 	}
 
-  short *buf = malloc(2*samples*sizeof(short));
+  size_t buf_len = 2*samples*sizeof(short);
+  short *buf = malloc(buf_len);
 	for (;;) {
 		if ((err = snd_pcm_readi (capture_handle, buf, samples)) != samples) {
 			fprintf (stderr, "read from audio interface failed (%s)\n",
@@ -80,48 +103,20 @@ main (int argc, char *argv[])
 			exit (1);
 		}
 
-    int high = 0, low = 0, max = -32768, min = 32767;
     int sync_length_cycles = (sync_length*rate + 999)/1000;
+    size_t offset = 0;
+    unsigned int low_len, high_len;
 
     // first discard everything until the end of the sync pulse
-    for (i = 0; i < samples; i++) {
-      if (buf[2*i] <= threshhold)
-        low++;
-      else if (low >= sync_length_cycles)
-        break;
-      else
-        low = 0;
-    }
+    while (read_pulse(buf, &offset, buf_len, &low_len) || low_len < sync_length_cycles);
 
-    low = 0;
-    for (; i < samples; i++) {
-//      printf("%hi ", buf[2*i]);
-      if (max < buf[2*i]) max = buf[2*i];
-      if (min > buf[2*i]) min = buf[2*i];
-      if (buf[2*i] > threshhold) {
-        high++;
-        if (low > 0) { // end of low signal
-          if (low >= sync_length_cycles) { // end of cycle, skip the rest
-            low = 0;
-            break;
-          }
-          printf("L%i ", low);
-          low = 0;
-        }
-      } else {
-        low++;
-        if (high > 0) { // end of high signal
-          printf("H%i ", high);
-          high = 0;
-        }
-      }
+    int i = 0;
+    for (; i < 6; i++) {
+      read_pulse(buf, &offset, buf_len, &high_len);
+      read_pulse(buf, &offset, buf_len, &low_len);
+      printf("%u ", high_len + low_len);
     }
-    if (low > 0) // end of low signal
-      printf("L%i ", low);
-    if (high > 0) // end of high signal
-      printf("H%i ", high);
     printf("\n");
-//    printf("%hd %hd\n", min, max);
 	}
 
 	snd_pcm_close (capture_handle);
