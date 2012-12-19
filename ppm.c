@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <alsa/asoundlib.h>
+#include <linux/input.h>
+#include <linux/uinput.h>
 
 unsigned int rate = 192000; // soundcard sample rate in Hz
 const unsigned int sync_length = 5; // minimum length of sync pulse in ms
@@ -102,7 +104,40 @@ main (int argc, char *argv[])
   unsigned int period = 20; // length of TX cycle in ms
   size_t samples; // number of samples in a period
   enum { ST_UNKNOWN, ST_SYNC, ST_LOW, ST_HIGH } state = ST_UNKNOWN; // type of current pulse
+  int i;
   int err;
+
+  /* initialize uinput joystick stuff */
+  int uinput;
+  uinput = open("/dev/input/uinput", O_WRONLY | O_NONBLOCK);
+  if (uinput < 0) {
+    printf("/dev/input/uinput: %s\n", strerror(uinput));
+    exit(1);
+  }
+
+  /* we assign channels 0-6 to X, Y, Z, RX, RY, RZ */
+  err = ioctl(uinput, UI_SET_EVBIT, EV_ABS);
+  err = ioctl(uinput, UI_SET_ABSBIT, ABS_X);
+  err = ioctl(uinput, UI_SET_ABSBIT, ABS_Y);
+  err = ioctl(uinput, UI_SET_ABSBIT, ABS_Z);
+  err = ioctl(uinput, UI_SET_ABSBIT, ABS_RX);
+  err = ioctl(uinput, UI_SET_ABSBIT, ABS_RY);
+  err = ioctl(uinput, UI_SET_ABSBIT, ABS_RZ);
+
+  struct uinput_user_dev uidev;
+  memset(&uidev, 0, sizeof(uidev));
+  snprintf(uidev.name, UINPUT_MAX_NAME_SIZE, "ppmjoy");
+  uidev.id.bustype = BUS_USB;
+  uidev.id.vendor = 0x1234;
+  uidev.id.product = 0xfedc;
+  uidev.id.version = 1;
+  for (i = 0; i < 6; i++) {
+    uidev.absmax[i] = 480; // set maximum values to a pulse length of 2.5ms @192kHz
+  }
+  err = write(uinput, &uidev, sizeof(uidev));
+  err = ioctl(uinput, UI_DEV_CREATE);
+
+  /* initialize alsa stuff */
   snd_pcm_t *capture_handle;
   snd_pcm_hw_params_t *hw_params;
 
@@ -169,6 +204,8 @@ main (int argc, char *argv[])
   size_t offset;
   pulse p;
 
+  /* read pulses from TX and forward them to uinput */
+
   init: // look for a sync pulse
   offset = samples;
   for (;;) {
@@ -178,16 +215,25 @@ main (int argc, char *argv[])
   }
 
   for (;;) {
-    int i;
     for (i = 0; i < 6; i++) {
-      size_t l;
+      struct input_event ev;
+      memset(&ev, 0, sizeof(ev));
+      ev.type = EV_ABS;
+      ev.code = ABS_X+i;
+
+      // read high pulse
       alsa_to_pulse(capture_handle, data, &offset, samples, threshhold, &p);
-      l = p.length;
+      ev.value = p.length;
+
+      // read low pulse
       alsa_to_pulse(capture_handle, data, &offset, samples, threshhold, &p);
-      l += p.length;
-//      printf("H%zu ", l);
+      ev.value += p.length;
+
+      // send value to uinput
+      err = write(uinput, &ev, sizeof(ev));
     }
-//    printf("\n");
+
+    // skip sync pulse, or reinitialize if there is no sync pulse
     alsa_to_pulse(capture_handle, data, &offset, samples, threshhold, &p);
     if (p.length < sync_length_cycles || p.length > samples)
       goto init;
