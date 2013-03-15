@@ -6,9 +6,10 @@
 #include <linux/input.h>
 #include <linux/uinput.h>
 
-bool debug = false;
+bool debug = true;
 
 typedef struct {
+  unsigned int rate; // soundcard sampling rate in Hz
   size_t sync_min, sync_max; // allowed length of sync pulse in samples
   int16_t threshhold; // threshhold to be a high pulse
 } pulse_params_t;
@@ -117,6 +118,7 @@ int init_alsa (state_t *state, char *dev, unsigned int rate, unsigned int period
   }
 
   state->samples = (rate*period + 999)/1000;
+  state->params.rate = rate;
   state->params.sync_min = (sync_length*rate + 999)/1000;
   state->params.sync_max = 2*state->samples;
   state->params.threshhold = threshhold;
@@ -151,6 +153,8 @@ bool datum_to_pulse(int16_t datum, pulse_params_t *params, pulse_t *p)
       case HIGH: // continue high pulse
         p->length++;
         break;
+      default: // error
+        exit(1);
     }
   } else { // low signal
     switch (p->type) {
@@ -164,15 +168,18 @@ bool datum_to_pulse(int16_t datum, pulse_params_t *params, pulse_t *p)
       case HIGH: // end of low pulse
         complete = true;
         break;
+      default: // error
+        exit(1);
     }
   }
 
   if (complete) {
-    if (p->length >= params->sync_min)
+    if (p->length >= params->sync_min) {
       if (p->type == LOW && p->length <= params->sync_max)
-      p->type = SYNC; // this is really a sync pulse
-    else
-      p->type = INVALID; // pulse is too long
+        p->type = SYNC; // this is really a sync pulse
+      else
+        p->type = INVALID; // pulse is too long
+    }
 
     if (debug) {
       switch (p->type) {
@@ -224,23 +231,25 @@ void read_pulse_alsa(state_t *state)
   }
 }
 
-main (int argc, char *argv[])
+int main (int argc, char *argv[])
 {
-  unsigned int rate = 1000000; // audio sample rate in Hz; will be updated by ALSA call
-  unsigned int period = 20; // length of TX cycle in ms
   int i;
   int err;
+
+  /* initialize alsa stuff */
+  state_t state;
+  init_alsa(&state, "hw:0", 1000000, 10, 5, 32700);
 
   /* initialize uinput joystick stuff */
   int uinput;
   if (!debug) {
     uinput = open("/dev/input/uinput", O_WRONLY | O_NONBLOCK);
     if (uinput < 0) {
-      fprintf(stderr, "/dev/input/uinput: %s\n", strerror(uinput));
+      fprintf(stderr, "/dev/input/uinput: %s\n", strerror(errno));
       exit(1);
     }
 
-    /* we assign channels 0-6 to X, Y, Z, RX, RY, RZ */
+    /* we assign channels 0-6 to X, Y, Z, RX, RY, RZ, and simulate a button with the gyro channel */
     err = ioctl(uinput, UI_SET_EVBIT, EV_ABS);
     err = ioctl(uinput, UI_SET_ABSBIT, ABS_X);
     err = ioctl(uinput, UI_SET_ABSBIT, ABS_Y);
@@ -248,6 +257,8 @@ main (int argc, char *argv[])
     err = ioctl(uinput, UI_SET_ABSBIT, ABS_RX);
     err = ioctl(uinput, UI_SET_ABSBIT, ABS_RY);
     err = ioctl(uinput, UI_SET_ABSBIT, ABS_RZ);
+    err = ioctl(uinput, UI_SET_EVBIT, EV_KEY);
+    err = ioctl(uinput, UI_SET_KEYBIT, BTN_JOYSTICK);
 
     struct uinput_user_dev uidev;
     memset(&uidev, 0, sizeof(uidev));
@@ -257,15 +268,12 @@ main (int argc, char *argv[])
     uidev.id.product = 0xfedc;
     uidev.id.version = 1;
     for (i = 0; i < 6; i++) {
-      uidev.absmax[i] = 480; // set maximum values to a pulse length of 2.5ms @192kHz
+      uidev.absmax[i] = (2500*state.params.rate)/1000000;
+      // set maximum values to a pulse length of 2.5ms
     }
     err = write(uinput, &uidev, sizeof(uidev));
     err = ioctl(uinput, UI_DEV_CREATE);
   }
-
-  /* initialize alsa stuff */
-  state_t state;
-  init_alsa(&state, argv[1], 1000000, 10, 5, 32700);
 
   /* read pulses from TX and forward them to uinput */
 
@@ -307,9 +315,12 @@ main (int argc, char *argv[])
         goto init;
       ev.value += state.pulse.length;
 
-      // remove jitter
-      if (ev.value >= prev_length[i] - 1 && ev.value <= prev_length[i] + 1)
+      int diff = ev.value - prev_length[i];
+      // remove jitter on rudder channel
+      if (i == 3 && diff >= -1 && diff <= 1)
         ev.value = prev_length[i];
+
+      prev_length[i] = ev.value;
 
       if (debug) {
         printf("%i ", ev.value);
@@ -318,7 +329,18 @@ main (int argc, char *argv[])
         err = write(uinput, &ev, sizeof(ev));
       }
 
-      prev_length[i] = ev.value;
+      // check if the gyro switch was moved
+      // gyro channel seems especially jittery
+/*      if (i == 4 && (diff > 3 || diff < -3)) {
+        ev.type = EV_KEY;
+        ev.code = BTN_JOYSTICK;
+        // depress button if channel increased, release if decreased
+        if (diff > 3)
+          ev.value = 1;
+        else
+          ev.value = 0;
+        err = write(uinput, &ev, sizeof(ev));
+      } */
     }
 
     // skip sync pulse and following high pulse

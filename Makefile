@@ -1,5 +1,5 @@
 ppm: ppm.c
-	gcc -lasound ppm.c -o ppm
+	gcc -Wall -lasound ppm.c -o ppm
 
 debug: ppm.c
-	gcc -lasound ppm.c -g -o ppm
+	gcc -Wall -lasound ppm.c -g -o ppm
