@@ -287,11 +287,6 @@ int main (int argc, char *argv[])
       break; // found a complete sync pulse
   }
 
-  // ignore initial high pulse
-  read_pulse_alsa(&state);
-  if (state.pulse.type != HIGH)
-    goto init;
-
   if (debug)
     printf("\n");
 
@@ -303,15 +298,15 @@ int main (int argc, char *argv[])
       ev.type = EV_ABS;
       ev.code = ABS_X+i;
 
-      // look for a low pulse
+      // look for a high pulse
       read_pulse_alsa(&state);
-      if (state.pulse.type != LOW)
+      if (state.pulse.type != HIGH)
         goto init;
       ev.value = state.pulse.length;
 
-      // followed by a high pulse
+      // followed by a low pulse
       read_pulse_alsa(&state);
-      if (state.pulse.type != HIGH)
+      if (state.pulse.type != LOW)
         goto init;
       ev.value += state.pulse.length;
 
@@ -343,13 +338,13 @@ int main (int argc, char *argv[])
       } */
     }
 
-    // skip sync pulse and following high pulse
+    // skip high pulse and following sync pulse
     read_pulse_alsa(&state);
-    if (state.pulse.type != SYNC)
+    if (state.pulse.type != HIGH)
       goto init;
 
     read_pulse_alsa(&state);
-    if (state.pulse.type != HIGH)
+    if (state.pulse.type != SYNC)
       goto init;
 
     if (debug)
