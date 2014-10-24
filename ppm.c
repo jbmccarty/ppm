@@ -243,9 +243,9 @@ int main (int argc, char *argv[])
   /* initialize uinput joystick stuff */
   int uinput;
   if (!debug) {
-    uinput = open("/dev/input/uinput", O_WRONLY | O_NONBLOCK);
+    uinput = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
     if (uinput < 0) {
-      fprintf(stderr, "/dev/input/uinput: %s\n", strerror(errno));
+      fprintf(stderr, "/dev/uinput: %s\n", strerror(errno));
       exit(1);
     }
 
