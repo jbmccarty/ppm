@@ -239,6 +239,7 @@ int main (int argc, char *argv[])
   /* initialize alsa stuff */
   state_t state;
   init_alsa(&state, "hw:0", 1000000, 10, 5, 32700);
+  double rate = state.params.rate;
 
   /* initialize uinput joystick stuff */
   int uinput;
@@ -318,7 +319,7 @@ int main (int argc, char *argv[])
       prev_length[i] = ev.value;
 
       if (debug) {
-        printf("%i ", ev.value);
+        printf("%f ", 1000*(ev.value/rate) - 0.028);
       } else {
         // send value to uinput
         err = write(uinput, &ev, sizeof(ev));
