@@ -6,7 +6,7 @@
 #include <linux/input.h>
 #include <linux/uinput.h>
 
-bool debug = true;
+bool debug = false;
 
 typedef struct {
   unsigned int rate; // soundcard sampling rate in Hz

@@ -3,3 +3,5 @@ derived from a PPM (pulse-position modulation) signal with 6 channels on
 the default ALSA device on Linux. It is recommended to run `jscal' to
 calibrate the resulting device. The program needs permission to read
 from the ALSA device, and to create uinput devices.
+
+On my system, it creates a device at /dev/input/js0.

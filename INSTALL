@@ -1,4 +1,6 @@
 You need the libasound2 library and include files, as well as gcc. To
 compile the program, run `make'. ppm needs write access to /dev/uinput
 to create the joystick device. The easiest way to accomplish this is to
-make ppm suid root, i.e. `chown root ppm; chmod 1755 ppm' (as root).
+make ppm suid root, i.e. `chown root ppm; chmod 1755 ppm' (as root). Of
+course, this isn't a terribly good idea, but I haven't attempted to
+improve the situation.
